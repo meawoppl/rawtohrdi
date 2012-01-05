@@ -38,119 +38,48 @@ ROTATE = '-t 270 '
     along with this program.  If not, see <http://www.gnu.org/licenses/>
 """
 VERSION = '0.1.0'
-import os
-import sys
-import getopt
+import os, sys, getopt, argparse
 import numpy as np
 import OpenEXR, Imath
 from multiprocessing import Pool
 from subprocess import Popen, PIPE
 
-# Various ways to call dcraw
-DCRAW  = 'dcraw -q 3 -4 -w -c '+ROTATE
-DCRAWV = 'dcraw -v -q 3 -4 -w -c '+ROTATE
-
 def oops():
         print """
         Oops! You got some arguments wrong..."""
         
-def usage(v=0):
-        """verbosity level. Currently 0-1 supported. (0=Summary 1=Verbose) """
-        if v >= 1:
-                print " rawtohdri Version: ", VERSION, "Copyright 2011 Aaron Estrada bin.echo@gmail.com"
-        if v >= 0:
-                print """
- Usage: stacker [OPTION]  INPUT_RAW_DIR """
-        if v >= 1:
-                print """
- raw2hdri batch-processes bracketed camera RAW files into exr format HDR
- images. It works with any raw file format dcraw supports. The only required
- argument is INPUT_RAW_DIR, in which case the default behavior is to dump the
- resulting HDRIs in the INPUT_RAW_DIR with the file name hdrout_%04d.exr . 
- The output images may alternately be nested in a dir named exr inside the
- input dir using the -n flag.  The size of the bracket steps may be set with
- the -e flag ( Default = ev 3 ). raw2hdri assumes bracketed images are ordered
- darkest exposure to brightest. """
-        if v >= 0:
-                print """
- Options:
- 
- -x, --chunk=NUM Number of images per HDR stack      ( Default = 3 )
- -e, --ev=BRACKET_EV     ( Default = 3 )
- -c, --center=CENTER_BRACKET  ( Default = 2 ) ( second exposure )
- -n, --nest      Nest output images in dir named "exr" in input dir
- -o, --out-basename=OUTPUT_IMAGES_BASENAME  ( Default = hdrout_%04d.exr )
- -d, --out-dir=OUTPUT_IMAGES_DIR            ( Default = input_images_dir )
- -l, --lo=LOWCLIP_VALUE   (Default 0.70)
- -H, --hi=HICLIP_VALUE    (Default 0.80)
- -h, --help   Use the long form --help for more detailed help & examples.
- -v, --verbose  Turn on verbose output in Workers
-                 """
-        if v >= 1:
-                print """ Examples:
-            ( Put some examples here ) 
-                """
 
-def getargv(argv):
+epilog = """rawtohdri Version: " + VERSION + "Copyright 2011 Aaron Estrada bin.echo@gmail.com
+
+raw2hdri batch-processes bracketed camera RAW files into exr format HDR images. It works with any raw file format dcraw supports. The only required argument is INPUT_RAW_DIR, in which case the default behavior is to dump the resulting HDRIs in the INPUT_RAW_DIR with the file name hdrout_%04d.exr . The output images may alternately be nested in a dir named exr inside the input dir using the -n flag.  The size of the bracket steps may be set with the -e flag ( Default = ev 3 ). raw2hdri assumes bracketed images are ordered darkest exposure to brightest. """
+
+parser = argparse.ArgumentParser(description=' Usage: stacker [OPTION] INPUT_RAW_DIR', epilog=epilog)
+
+parser.add_argument('-x', "--chunk", dest="chunk", default=3, type=int, help='Number of images per HDR stack')
+parser.add_argument('-e', "--ev", dest="ev", default=3, type=int, help='Bracket ev')
+parser.add_argument("-c", "--center", dest="center", default = 2, help= "second exposure")
+parser.add_argument("-n", "--nest", dest="nest", default = False, action="store_true", 
+		    help= 'Nest output images in dir named "exr" in input dir')
+parser.add_argument("-o", "--out-basename", dest="output_basename", default="hdrout_%04d.exr")
+parser.add_argument("-d", "--out-dir", dest="output_images_dir", default=None)
+parser.add_argument("-v", dest="verbose_dcraw", default=False, action="store_true", help="turn on dcraw verbose output.")
+parser.add_argument("--lo", dest="lo", type=float, default = 0.70, help="Lowest value to be clipped.")
+parser.add_argument("--hi", dest="hi", type=float, default = 0.80, help="Highest value to be clipped.")
+parser.add_argument("input_dir", help="Directory to process")
+
+def usage(v = 0):
+	parser.print_help()
+	sys.exit()
+
+def getargv():
         """Returns args as dict ( key:value pairs ) """
-        args = dict()
-        args['chunk'] =           3
-        args['ev'] =              3
-        args['center'] =          2
-        args['nest'] =            False
-        args['output_basename'] = 'hdrout_'
-        args['output_dir'] =      None
-        args['lo'] =              0.7
-        args['hi'] =              0.8
-        args['verbose'] =         False
-        args['input_dir'] =       None
-                
-        try:
-                options, remainder = getopt.gnu_getopt(argv, 'x:e:c:no:d:l:H:hv',
-                ['chunk=', 'ev=', 'center=' ,'nest', 'out-basename=', 'out-dir=',
-                'lo=', 'hi=', 'help', 'verbose' ])
-        except getopt.GetoptError:
-                oops()
-                usage(0)                         
-                sys.exit(22)        
-        
-        for opt, arg in options:                
-                if opt in ('-h'):
-                    usage(0)
-                    sys.exit(0)
-                elif opt in ('--help'):
-                    usage(1)
-                    sys.exit(0)
-                elif opt in ('-x', '--chunk'):
-                    args['chunk'] = int(arg)
-                elif opt in ('-o', '--out-basename'):
-                    args['output_basename'] = arg
-                elif opt in ('-d', '--out-dir'):
-                    args['output_dir'] = arg
-                elif opt in ('-e', '--ev'):
-                    args['ev'] = int(arg)
-                elif opt in ('-c', '--center'):
-                    args['center'] = int(arg)
-                elif opt in ('-l', '--lo'):
-                    args['lo'] = float(arg)
-                elif opt in ('-H', '--hi'):
-                    args['hi'] = float(arg)
-                elif opt in ('-v', '--verbose'):
-                    args['verbose'] = True
-                elif opt in ('-n', '--nest'):
-                    args['nest'] = True
-                    
-        try:    # grab only first non-option arg as input_dir
-                args['input_dir'] = remainder[0]+'/'
-        except IndexError:
-                oops()
-                usage(0)
-                sys.exit(22)
+
+	args = parser.parse_args().__dict__                
         
         if args['nest'] == True:
                 args['output_dir'] = args['input_dir']+'exr'
         # Make sure ouput_dir has something useful in it no matter what
-        if args['output_dir'] == None:
+        if 'output_dir' not in args:
                 args['output_dir'] = args['input_dir']               
         
         """ print debugging info
@@ -169,13 +98,10 @@ def getargv(argv):
         """
         return(args)
 
-def getFiles(dir):
-    """Get list of files from 'dir' and returns list of those files with absolute path from /"""
-    files = []
-    for file in sorted(os.listdir(dir)):
-        file = os.path.abspath(dir+file)
-        files.append(file)
-    return(files)
+
+def getFiles(d):
+    """Get list of files from directory 'd' and returns list of those files with absolute path from /"""
+    return [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.lower().endswith("cr2")]
 
 def getMeta(file):
     """Get metadata from raw file using dcraw. Returns dict."""
@@ -190,12 +116,8 @@ def getMeta(file):
         m = i.split(': ')
         data.append(m[1])
     meta = dict()
-    meta['date']    = data[1]
-    meta['camera']  = data[2]
-    meta['iso']     = data[3]
-    meta['shutter'] = data[4]
-    meta['aperture']= data[5]
-    meta['focal']   = data[6]
+    for n, label in enumerate(['date' ,'camera' ,'iso' ,'shutter' ,'aperture' ,'focal']):
+	    meta[label] = data[n+1]
     return meta
 
 def chunk(l, n):
@@ -276,44 +198,40 @@ class PPM:
         many lines there are in the raster and do the right thing when calling
         this function manually. Consider using __iter__() and next() instead.
         """
-        items = lines * self.w * 3
-        return np.multiply(np.fromfile(self.data, dtype=self.dtype, count=items, sep='').byteswap(), self.f16)
+        return np.fromfile(self.data, dtype=self.dtype, count=(lines * self.w * 3), sep='').byteswap() * self.f16
     
     def read(self, size=None):
         """Read size number pixels, returned as interleaved 1D NumPy array.
         If the size argument is negative or omitted, read until EOF is reached.
         """
-        if size == None:           
-            return np.multiply(np.fromfile(self.data, dtype=self.dtype, count=-1, sep='').byteswap(), self.f16)
-        elif size <= 0:
-            return np.multiply(np.fromfile(self.data, dtype=self.dtype, count=-1, sep='').byteswap(), self.f16)
+        if (size == None) or (size <= 0):
+            d = np.fromfile(self.data, dtype=self.dtype, count=-1, sep='').byteswap()
         else:
-            items = size * 3
-            return np.multiply(np.fromfile(self.data, dtype=self.dtype, count=items, sep='').byteswap(), self.f16)
+            d = np.fromfile(self.data, dtype=self.dtype, count=size * 3, sep='').byteswap()
     
+	return d * self.f16
+
     def close(self):
         self.data.close()
 
-def lumaClip_(p, lo=0.65, hi=0.85):
+def lumaClip(p, lo=0.65, hi=0.85):
 	"""
 	Makes a matte value for line p based on luma. Expects floating-point input.
 	Returns 1 for values under lo. Returns lerped values from 1 to 0 to hi
     lo should always be a lower value than hi ... ie lumaClip(p, 0.8, 0.95)
 	"""
-	if p >= hi:     
-		return 0.0
-	if p < lo:
-		return 1.0
-	else:
-		return (hi+(-1*p))/(hi-lo)
-lumaClip = np.vectorize(lumaClip_)
+	return_value = (hi+(-1*p))/(hi-lo)
+	return_value[p >= hi] = 0.0
+	return_value[p < hi] = 1.0
+	
+	return return_value
 
 def ev2ef(ev):
     """Converts stops to linear 'exposure factor'"""
     if ev <= 0:
         return 2.0**abs(ev)
     else:
-        return 1.0/2**ev
+        return 1.0 / 2**ev
 
 def hdrStackLines(bg, fg, ev, lo=0.65, hi=0.85):
     """
@@ -322,28 +240,25 @@ def hdrStackLines(bg, fg, ev, lo=0.65, hi=0.85):
     """
     exposureFactor = ev2ef(ev)
     fgMatte = lumaClip(fg, lo, hi)
-    scaled_fg = np.multiply(np.multiply(fg, exposureFactor), fgMatte)
-    return np.add(np.multiply(bg, np.subtract(1.0, fgMatte)), scaled_fg)
+    scaled_fg = fg * exposureFactor * fgMatte
+    return (bg * (1.0 - fgMatte)) + scaled_fg
 
 if __name__ == '__main__':
-    try: # Test for no args
-        sys.argv[1]
-    except IndexError:
-        usage(0)
-        sys.exit(22)    
-    args = getargv(sys.argv[1:])
+    args = getargv()
     files = getFiles(args['input_dir'])
     # Sanity checks
-    if len(files)%args['chunk'] != 0:
-        print 'Input file list is not a multiple of chunk size: ', args['chunk']
-        sys.exit(22)
-    if args['center'] > args['chunk']:
-        print "'center' image index exceeds size of chunks!"
-        sys.exit(22)
-    if not os.path.exists(args['output_dir']):
-        os.mkdir(args['output_dir'])
-    if args['verbose'] == True:
-        DCRAW = DCRAWV
+    assert (len(files) % args['chunk']) == 0, 'Input file list is not a multiple of chunk size: %i' % args['chunk']
+    assert args['center'] < args['chunk'], "'center' image index exceeds size of chunks! (center:%i chunks: %i)" % (args['center'], args['chunk'])
+
+    if not os.path.isdir(args['output_dir']):
+        print "Creating output directory (%s)" % args['output_dir']
+	os.mkdir(args['output_dir'])
+
+    # Various ways to call dcraw
+    if args['verbose_dcraw']:
+        DCRAW = 'dcraw -v -q 3 -4 -w -c ' + ROTATE
+    else:
+        DCRAW  = 'dcraw -q 3 -4 -w -c ' + ROTATE
         
     stacks = list(chunk(files, args['chunk']))
     # Finally... let's process some files!
@@ -351,29 +266,39 @@ if __name__ == '__main__':
         cmdlist = []
         tmplist = []
         for f in stack:
-            cmd = DCRAW+f+' > '+TEMP_DIR+f.split('/')[-1]+'.PPM'
-            tmp = TEMP_DIR+f.split('/')[-1]+'.PPM'
+            crap, fname = os.path.split(f)
+	    temp_fname  =f.split('/')[-1]+'.PPM'
+            tmp_path = os.path.join(TEMP_DIR, temp_fname)
+            cmd = DCRAW + f + ' > ' + tmp_path
+
+	    # TODO: This tmplist stuff should be replaced with tempfile at some point
             cmdlist.append(cmd)
-            tmplist.append(tmp)
+            tmplist.append(tmp_path)
         print 'Processing stack:'+str(stackIndex+1)+'/'+str(len(stacks))
         print 'Debayering...'
-        pool = Pool(processes=MAX_WORKERS)  # start worker processes.
-        pool.map(sh, cmdlist) # run each cmd in list in a subprocesses until they are all done
+
+	# Parallell process the debayering via dcraw
+        pool = Pool(processes=MAX_WORKERS) 
+        pool.map(sh, cmdlist)
         pool.close()
+
+	# Open each PPM file
         layers = [ PPM(file(fileIn, 'rb')) for fileIn in tmplist ]
         meta = getMeta(stack[args['center']-1])
-        HEADER = OpenEXR.Header(layers[0].w, layers[0].h)
+
+	width, height = layers[0].w, layers[0].h
+        HEADER = OpenEXR.Header(width, height)
         HEADER['channels'] = dict([(c, Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))) for c in HEADER['channels'].keys()])
-        HEADER['comments'] = 'Made with rawtohdri '+VERSION+' by Aaron Estrada'
-        HEADER['camera']  = meta['camera']
-        HEADER['date']    = meta['date']
-        HEADER['iso']     = meta['iso']
-        HEADER['aperture']= meta['aperture']
-        HEADER['shutter'] = meta['shutter']
-        HEADER['focal']   = meta['focal']
-        OUTFILE = args['output_dir']+'/'+args['output_basename']+'%04d.exr' % (stackIndex+1)
+        HEADER['comments'] = 'Made with rawtohdri ' + VERSION + ' by Aaron Estrada'
+
+	for label in ['camera', 'date', 'iso', 'aperture', 'shutter', 'focal']:
+		HEADER[label] = meta[label]
+
+	outfile_name = args['output_basename'] % (stackIndex + 1)
+        OUTFILE = os.path.join(args['output_dir'], outfile_name)
+
         exr = OpenEXR.OutputFile(OUTFILE, HEADER)
-        print 'Starting HDR stacking of',len(stack), layers[0].w,'x',layers[0].h, 'resolution images ...'
+        print 'Starting HDR stacking of',len(stack), width,'x', height, 'resolution images ...'
         bg = layers.pop(0)
         
         for lindex, output in enumerate(bg):
@@ -381,9 +306,10 @@ if __name__ == '__main__':
             for layer in layers:        
                 output = hdrStackLines(output, layer.readline(), ev, args['lo'], args['hi'])
                 ev = ev + args['ev']
+
             #Adjust output to "center" exposure.
             output = output*(2.0**(xrange(0,999999,args['ev'])[args['center']-1]))
-            R,G,B = np.column_stack(output.reshape([len(output)/3, 3]).astype(np.float16))
+            R, G, B = np.column_stack(output.reshape([len(output) / 3, 3]).astype(np.float16))
             sys.stdout.write("\r Writing Scanline: ")
             sys.stdout.write(str(lindex+1))
             sys.stdout.flush()
